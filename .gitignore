@@ -1,0 +1,4 @@
+# Real credentials never leave the local machine
+riffado-notes/config.json
+*.skill
+__pycache__/

@@ -1,0 +1,5 @@
+{
+  "host": "https://riffado.example.com",
+  "api_key": "op_REPLACE_WITH_YOUR_READ_ONLY_KEY",
+  "timezone": "UTC"
+}
