@@ -28,11 +28,32 @@ Your output is an English note that a busy reader understands in one pass. The n
 6. The recording title comes from Plaud's AI, which hears the audio, so it is often more exact for names than the transcript. If the title and the transcript spell a name differently (for example "D2 API" and "DINCO API"), use the title's spelling and record the difference in the cleanup log.
 7. Keep the speaker's level of certainty. "Maybe", "I think" and "probably" stay as hedges in English. Do not make a guess into a fact.
 
+## 1A. Read the photos (when the recording has any)
+
+Plaud "Highlight" photos are pictures the user took during the recording. Examples: a meeting's participant list, a slide or a shared screen, a whiteboard, a prescription, a lab result, a form, or a place. A photo is often the most exact source in the whole recording, because it shows the written form of words that the speech-recognition got wrong. Use the photos to make the note more correct and more complete.
+
+1. The fetch script lists the photos in a `### Photos` table, and puts `[[PHOTO n · ~mm:ss]]` markers in the transcript. **Open every photo file with your image-viewing tool before you write the note.** On Claude web, use the file-view tool on the path. In Claude Code, use Read.
+2. A marker's position is an **estimate**, because transcripts have no timestamps. The script calculates it from the photo time divided by the recording length. Connect a photo to the speech around its marker only when the content matches.
+3. Photos can be sideways, dark or blurred. Read them carefully. Text that you cannot read with confidence is `[illegible]`. Never guess it.
+4. What a photo can give you, and how to use it:
+
+| Photo shows | Use it to |
+|---|---|
+| Participant list (Teams, Zoom, Meet) | Get the attendees' real names and correct name spellings. A highlighted row or an open microphone shows who was probably speaking at that moment. That is a hint, not proof. |
+| Slide, shared screen, document, code, spreadsheet | Get the exact spelling of systems, fields, APIs and numbers. Add facts that people pointed at but did not read aloud ("this field here"). |
+| Whiteboard, sketch, flow | Base the section's Mermaid diagram on it, together with the speech. Write "Based on photo n" under the diagram. |
+| Prescription, lab result, medical form | Get the exact medicine names, doses, frequencies and lab values. These beat the transcript. |
+| Place, object, screen error message | Add context: where the meeting happened, which device or error people discussed. |
+
+5. **Which source wins.** For the spelling of names and terms, clearly legible photo text comes first, then the recording title, then the transcript. If a photo and the speech give **different values** (a dose, an amount, a date), do not pick one. Show both, and flag the conflict: `500 mg (photo) / 250 mg (spoken) [conflict]`.
+6. Copy only what the note needs. Do not copy email addresses, phone numbers, ID numbers or account numbers from a photo unless an action item needs them. Do not describe people's appearance.
+7. Put a photo in the note where it helps the reader. Add it as an image line in the section it belongs to, followed by a one-line caption. The caption says what the photo shows and what it added: `![Photo 2 · 05:53](images/<recording-id>/02-05m53s.jpg)` and then `*Photo 2 (05:53): participant list. Gave the attendees' names.*`. Leave out photos that add nothing, such as duplicates or blurred shots, but list them in the photo index.
+
 ## 2. Find the speakers
 
 The transcript has no speaker labels, so infer the speakers from the content.
 
-- Use a name when someone says it ("Ms. Reyes", "Sir Ben"). Otherwise use a role from the content: Doctor, Patient, Companion, Developer, Project Lead, Bank Representative. If two people have the same role, number them: Developer 1 and Developer 2.
+- Use a name when someone says it ("Ms. Reyes", "Sir Ben"), or when a photo shows it, such as a participant list. Match a name to a voice only when the speech or a photo supports the match: a person says their own name, someone addresses them, or the participant list shows them speaking. Otherwise list the attendees without assigning statements to them. Otherwise use a role from the content: Doctor, Patient, Companion, Developer, Project Lead, Bank Representative. If two people have the same role, number them: Developer 1 and Developer 2.
 - Use the same label for a person every time in the note.
 - If you cannot tell who said something, do not assign it to a person. Put the action item under **Unassigned**.
 - If one of two people could have said something (for example, a patient or a companion), use a combined label such as "Patient or companion". Do not pick one.
@@ -116,6 +137,8 @@ Window: <the window you used, e.g. "11:00–14:00", "today", or "latest recordin
 
 Speakers (inferred from context): <Label 1>, <Label 2>, …
 
+Photos: <N used of M> (<what they added, e.g. "participant names, slide text">). Leave this line out if there are no photos.
+
 > **Summary.** <2–4 short sentences. Say what the recording was about, the main result or decision, and the most important next step.>
 
 **Topics:** 1. <Section 1> · 2. <Section 2> · …
@@ -130,6 +153,9 @@ Speakers (inferred from context): <Label 1>, <Label 2>, …
 
 - <Key point, in plain English>
 - <Decision, number, or finding. Put **bold** on the values that matter>
+
+![Photo <n> · <mm:ss>](images/<recording-id>/<file>.jpg)
+*Photo <n> (<mm:ss>): <what it shows>. <What it added to this section>.*   (optional: only for useful photos)
 
 ## 2. <Section heading>
 
@@ -147,7 +173,7 @@ Speakers (inferred from context): <Label 1>, <Label 2>, …
 
 ---
 
-<details><summary>Glossary and cleanup log</summary>
+<details><summary>Glossary, cleanup log and photo index</summary>
 
 **Glossary** (optional; only terms most readers will not know)
 - **<Term>**: <one-line definition>
@@ -155,6 +181,13 @@ Speakers (inferred from context): <Label 1>, <Label 2>, …
 **Cleanup log**
 - "<heard form>" → "<corrected form>" (<why>)
 - <Term> [unclear]: kept as heard
+- "<heard form>" → "<form shown in photo n>" (from photo)
+
+**Photo index** (only if there are photos)
+
+| # | Time | Shows | Used in |
+|---|---|---|---|
+| 1 | 01:45 | <short description, or "blurred / duplicate"> | <section, or "not used"> |
 
 </details>
 ````
@@ -171,7 +204,8 @@ If the request covers more than one recording (for example "today's notes"):
 
 ## 8. Final checks (before you send the note)
 
-1. Every number, dose, name and date in the note appears in the transcript, or is in the cleanup log.
+1. Every number, dose, name and date in the note appears in the transcript or in a photo, or is in the cleanup log.
 2. Every diagram follows the syntax rules in section 4.
 3. Every action item has an owner, or is under Unassigned.
-4. You ran `scripts/ste-lint.py` on the note file and fixed each hard violation in your own prose, including the template's header lines. Do not change quoted titles or system names to satisfy the linter.
+4. You opened every photo, and every photo is in the photo index. Each fact you took from a photo matches what the photo shows.
+5. You ran `scripts/ste-lint.py` on the note file and fixed each hard violation in your own prose, including the template's header lines. Do not change quoted titles or system names to satisfy the linter.
