@@ -19,7 +19,7 @@ Photos: when a recording has Highlight photos (`images` in the detail payload), 
 downloaded to --images-dir (default ./images/<recording-id>/), downscaled for viewing, and
 their approximate position is marked in the transcript as [[PHOTO n · ~mm:ss]].
 """
-import argparse, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, glob, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -170,7 +170,8 @@ def save_images(full, images_dir, tz):
                "captured": cap.astimezone(tz).strftime("%H:%M:%S") if cap else "?",
                "mime": im.get("mime_type"), "path": None, "note": ""}
         view_path = os.path.join(folder, tag + ".jpg")
-        if os.path.isfile(view_path):
+        orig_dir = os.path.join(folder, "orig")
+        if os.path.isfile(view_path) and glob.glob(os.path.join(orig_dir, tag + ".*")):
             rec["path"] = view_path
             out.append(rec)
             continue
@@ -180,6 +181,9 @@ def save_images(full, images_dir, tz):
             out.append(rec)
             continue
         ext = (im.get("mime_type") or ctype or "image/jpeg").split("/")[-1].split(";")[0].replace("jpeg", "jpg")
+        os.makedirs(orig_dir, exist_ok=True)  # full-resolution copy for photo_tool.py crops
+        with open(os.path.join(orig_dir, f"{tag}.{ext}"), "wb") as f:
+            f.write(data)
         if Image:
             try:
                 import io
@@ -291,8 +295,9 @@ def render(full, tz, transcript_mode, excerpt_chars, photos=None):
              f"({CFG['tz']}) · {mins} min" + (f" · language: {lang}" if lang else ""),
              f"- ID: {full['id']}", ""]
     if photos:
-        lines += ["### Photos", f"{len(photos)} Highlight photo(s). Positions in the transcript are estimated "
-                  "from offset/duration. View each file before writing the note.", "",
+        lines += ["### Photos", f"{len(photos)} Highlight photo(s). 'In recording' is the offset from the start "
+                  "of the audio. Positions in the transcript are estimated from offset/duration. View each file "
+                  "before writing the note. Full-resolution originals are in orig/ for scripts/photo_tool.py.", "",
                   "| # | In recording | Taken at | File | Note |", "|---|---|---|---|---|"]
         lines += [f"| {p['n']} | {p['offset']} | {p['captured']} | `{p['path'] or '-'}` | {p['note']} |" for p in photos]
         lines.append("")

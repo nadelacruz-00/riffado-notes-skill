@@ -26,6 +26,7 @@ riffado-notes/
 ├── scripts/
 │   ├── riffado_notes.py              # fetches recordings, transcripts and photos
 │   ├── render_notes_html.py          # converts notes.md to notes.html: renders diagrams, embeds photos
+│   ├── photo_tool.py                 # rotates or zooms into a photo to read small or sideways text
 │   └── ste-lint.py                   # STE100 linter (from asd-ste100-skill, MIT)
 └── THIRD_PARTY_NOTICES.md
 ```
@@ -71,5 +72,7 @@ Photos sync only for Plaud 4.0 accounts that have "Import Plaud transcripts, sum
 1. saves each photo to `images/<recording-id>/NN-MMmSSs.jpg`. If Pillow is installed, it fixes the rotation and downscales the photo to a 1568 px long edge. HEIC photos also need `pillow-heif`.
 2. lists the photos in a `### Photos` table in its output.
 3. inserts `[[PHOTO n · ~mm:ss]]` markers into the transcript. Transcripts have no timestamps, so each position is an estimate: the photo time divided by the recording length.
+
+Full-resolution originals are kept in `images/<recording-id>/orig/`. `scripts/photo_tool.py` uses them to rotate a photo (`--rotate 90`), zoom in (`--crop l,t,r,b`, as fractions) or split it into tiles (`--grid 2x2`).
 
 Pass `--no-images` to skip photos.

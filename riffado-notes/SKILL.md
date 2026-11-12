@@ -38,7 +38,7 @@ python3 <skill-dir>/scripts/riffado_notes.py --id <id> --transcript full        
 ```
 
 - If there are 1–3 recordings, fetch all of them with `--transcript full --out raw.md`, then read `raw.md`.
-- **Photos.** The script also downloads each recording's Highlight photos into `images/<recording-id>/`, downscaled for viewing. It lists them in a `### Photos` table, and marks their estimated positions in the transcript as `[[PHOTO n · ~mm:ss]]`. Open every listed photo before you write. Use `--no-images` only when the user asks for a text-only result. Section 1A of the system prompt explains how to use the photos.
+- **Photos.** The script also downloads each recording's Highlight photos into `images/<recording-id>/`, downscaled for viewing. It lists them in a `### Photos` table, and marks their estimated positions in the transcript as `[[PHOTO n · ~mm:ss]]`. Open every listed photo before you write. Use `--no-images` only when the user asks for a text-only result. Section 1A of the system prompt explains how to use the photos. If a photo is sideways or its text is small, use `scripts/photo_tool.py` to rotate it or zoom into the full-resolution original in `orig/`.
 - If there are more recordings, list them first. Then fetch and write notes for **one recording at a time** with `--id`. This keeps each transcript in focus.
 - `--check` tests connectivity and the key. Run it first if anything fails.
 - The environment variables `RIFFADO_HOST`, `RIFFADO_API_KEY` and `RIFFADO_TZ` override `config.json`.
@@ -72,7 +72,7 @@ python3 <skill-dir>/scripts/ste-lint.py notes.md                           # pla
 python3 <skill-dir>/scripts/render_notes_html.py notes.md notes.html       # standalone page with rendered diagrams
 ```
 
-- Fix each hard linter violation in your own prose: semicolons, phrasal verbs, nominalizations, and over-long sentences. This includes the template's header lines. Ignore findings inside recording titles, system names and quoted speech.
+- Fix each hard linter violation in your own prose: semicolons, phrasal verbs, nominalizations, and over-long sentences. The template's metadata lines (date, Window, Speakers, Photos) are exempt from the sentence-length rule. Ignore findings inside recording titles, system names, quoted speech, text copied exactly from a photo, and the adjective "correct".
 - Read each Mermaid block again against the syntax rules in the system prompt. A broken diagram shows as an error box in the HTML.
 
 ## Step 5: Deliver
