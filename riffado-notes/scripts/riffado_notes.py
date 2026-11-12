@@ -14,8 +14,12 @@ Usage examples:
   python3 riffado_notes.py --last 1
   python3 riffado_notes.py --id <recording_id>
   python3 riffado_notes.py --check          # connectivity + auth self-test
+
+Photos: when a recording has Highlight photos (`images` in the detail payload), they are
+downloaded to --images-dir (default ./images/<recording-id>/), downscaled for viewing, and
+their approximate position is marked in the transcript as [[PHOTO n · ~mm:ss]].
 """
-import argparse, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, glob, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -25,7 +29,8 @@ except ImportError:  # Python < 3.9
 
 # Cloudflare in front of the host rejects Python's default "Python-urllib/x.y"
 # User-Agent with error 1010 (browser_signature_banned). Any explicit UA passes.
-USER_AGENT = "riffado-notes-skill/1.1"
+USER_AGENT = "riffado-notes-skill/1.2"
+MAX_IMAGE_EDGE = 1568  # longest edge Claude reads at full detail
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = {}
 
@@ -101,6 +106,125 @@ def api(path, params=None):
                      f"{urllib.parse.urlparse(CFG['host']).hostname} in the sandbox's network allowlist.")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def fetch_image(path):
+    """Download one photo. A 302 (S3 storage) goes to a pre-signed URL, which must be
+    fetched WITHOUT the Authorization header (S3 rejects a second auth mechanism)."""
+    url = path if path.startswith("http") else f"{CFG['host']}{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {CFG['key']}",
+                                               "User-Agent": USER_AGENT})
+    opener = urllib.request.build_opener(_NoRedirect)
+    for attempt in range(4):
+        try:
+            with opener.open(req, timeout=60) as r:
+                return r.read(), r.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308) and e.headers.get("Location"):
+                loc = urllib.parse.urljoin(url, e.headers["Location"])
+                plain = urllib.request.Request(loc, headers={"User-Agent": USER_AGENT})
+                with urllib.request.urlopen(plain, timeout=60) as r:
+                    return r.read(), r.headers.get("Content-Type", "")
+            if e.code == 429 and attempt < 3:
+                time.sleep(int(e.headers.get("Retry-After") or 2))
+                continue
+            return None, f"HTTP {e.code}"
+        except urllib.error.URLError as e:
+            return None, f"network: {e.reason}"
+    return None, "rate limited"
+
+
+def mmss(ms):
+    if ms is None:
+        return "?"
+    s = int(ms // 1000)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60:02d}:{s % 60:02d}"
+
+
+def save_images(full, images_dir, tz):
+    """Download + downscale a recording's photos. Returns a list of photo dicts."""
+    imgs = sorted(full.get("images") or [], key=lambda i: (i.get("offset_ms") is None, i.get("offset_ms") or 0))
+    if not imgs:
+        return []
+    folder = os.path.join(images_dir, full["id"])
+    os.makedirs(folder, exist_ok=True)
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        Image = None
+    if Image:
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            pass
+    out = []
+    for n, im in enumerate(imgs, 1):
+        off = im.get("offset_ms")
+        tag = f"{n:02d}-" + (f"{off // 60000:02d}m{off // 1000 % 60:02d}s" if off is not None else "nooffset")
+        cap = parse_ts(im.get("captured_at"))
+        rec = {"n": n, "id": im.get("id"), "offset_ms": off, "offset": mmss(off),
+               "captured": cap.astimezone(tz).strftime("%H:%M:%S") if cap else "?",
+               "mime": im.get("mime_type"), "path": None, "note": ""}
+        view_path = os.path.join(folder, tag + ".jpg")
+        orig_dir = os.path.join(folder, "orig")
+        if os.path.isfile(view_path) and glob.glob(os.path.join(orig_dir, tag + ".*")):
+            rec["path"] = view_path
+            out.append(rec)
+            continue
+        data, ctype = fetch_image(im.get("url") or f"/api/v1/recordings/{full['id']}/images/{im.get('id')}")
+        if data is None:
+            rec["note"] = f"download failed ({ctype})"
+            out.append(rec)
+            continue
+        ext = (im.get("mime_type") or ctype or "image/jpeg").split("/")[-1].split(";")[0].replace("jpeg", "jpg")
+        os.makedirs(orig_dir, exist_ok=True)  # full-resolution copy for photo_tool.py crops
+        with open(os.path.join(orig_dir, f"{tag}.{ext}"), "wb") as f:
+            f.write(data)
+        if Image:
+            try:
+                import io
+                pic = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+                pic.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))
+                pic.convert("RGB").save(view_path, "JPEG", quality=85)
+                rec["path"] = view_path
+            except Exception as e:  # e.g. HEIC without pillow-heif
+                raw = os.path.join(folder, f"{tag}.{ext}")
+                with open(raw, "wb") as f:
+                    f.write(data)
+                rec["path"], rec["note"] = raw, f"not converted ({type(e).__name__}); may not be viewable"
+        else:
+            raw = os.path.join(folder, f"{tag}.{ext}")
+            with open(raw, "wb") as f:
+                f.write(data)
+            rec["path"] = raw
+            rec["note"] = "" if ext in ("jpg", "png", "webp") else "HEIC; install Pillow + pillow-heif to view"
+        out.append(rec)
+    return out
+
+
+def mark_photos(text, photos, duration_ms):
+    """Insert [[PHOTO n · ~mm:ss]] at the approximate transcript position (offset/duration,
+    snapped forward to the next sentence end). Transcripts have no timestamps, so this is
+    an estimate."""
+    if not text or not photos or not duration_ms:
+        return text
+    marks = []
+    for p in photos:
+        if p["offset_ms"] is None:
+            continue
+        pos = int(len(text) * min(max(p["offset_ms"] / duration_ms, 0), 1))
+        m = re.search(r"[.?!](\s|$)", text[pos:pos + 300])
+        pos = pos + m.end() if m else pos
+        marks.append((pos, f" [[PHOTO {p['n']} · ~{p['offset']}]] "))
+    for pos, tag in sorted(marks, reverse=True):
+        text = text[:pos] + tag + text[pos:]
+    return text
+
+
 def iso(dt):
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -161,7 +285,8 @@ def best_transcript(full):
     return max(texts, key=len) if texts else ""
 
 
-def render(full, tz, transcript_mode, excerpt_chars):
+def render(full, tz, transcript_mode, excerpt_chars, photos=None):
+    photos = photos or []
     t = when(full)
     mins = round((full.get("duration_ms") or 0) / 60000)
     lang = (full.get("transcript") or {}).get("language") if isinstance(full.get("transcript"), dict) else None
@@ -169,12 +294,20 @@ def render(full, tz, transcript_mode, excerpt_chars):
              f"- Recorded: {t.astimezone(tz).strftime('%a %Y-%m-%d %H:%M') if t else 'unknown'} "
              f"({CFG['tz']}) · {mins} min" + (f" · language: {lang}" if lang else ""),
              f"- ID: {full['id']}", ""]
+    if photos:
+        lines += ["### Photos", f"{len(photos)} Highlight photo(s). 'In recording' is the offset from the start "
+                  "of the audio. Positions in the transcript are estimated from offset/duration. View each file "
+                  "before writing the note. Full-resolution originals are in orig/ for scripts/photo_tool.py.", "",
+                  "| # | In recording | Taken at | File | Note |", "|---|---|---|---|---|"]
+        lines += [f"| {p['n']} | {p['offset']} | {p['captured']} | `{p['path'] or '-'}` | {p['note']} |" for p in photos]
+        lines.append("")
     summary = text_of(full.get("summary")).strip()
     lines += ["### Summary", summary or "_No summary in Riffado; synthesize one from the transcript._", ""]
     if transcript_mode != "none":
         tr = best_transcript(full)
         if not tr and full.get("has_transcription"):
             tr = text_of(api(f"/recordings/{full['id']}/transcript")).strip()
+        tr = mark_photos(tr, photos, full.get("duration_ms"))
         if tr and transcript_mode == "excerpt" and len(tr) > excerpt_chars:
             tr = tr[:excerpt_chars] + f"\n\n… [truncated; {len(tr)} chars total, rerun with --transcript full]"
         lines += ["### Transcript", tr or "_No transcript yet (still processing)._", ""]
@@ -197,6 +330,8 @@ def main():
     p.add_argument("--out", help="also write full markdown (complete transcripts) to this file")
     p.add_argument("--list-only", action="store_true", help="titles/times only, no detail fetch")
     p.add_argument("--check", action="store_true", help="test connectivity and auth, then exit")
+    p.add_argument("--images-dir", default="images", help="where photos are saved (default ./images)")
+    p.add_argument("--no-images", action="store_true", help="skip photo download")
     a = p.parse_args()
     CFG = load_config(a.config)
     if a.tz:
@@ -253,11 +388,15 @@ def main():
                   f"transcript={r.get('has_transcription')} summary={r.get('has_summary')}")
         return
     fulls = [api(f"/recordings/{r['id']}") or r for r in recs]
+    photos = {x["id"]: ([] if a.no_images else save_images(x, a.images_dir, tz)) for x in fulls}
     for full in fulls:
-        print(render(full, tz, a.transcript, a.excerpt_chars))
+        print(render(full, tz, a.transcript, a.excerpt_chars, photos[full["id"]]))
+    n_ph = sum(len(v) for v in photos.values())
+    if n_ph:
+        print(f"[{n_ph} photo(s) saved under {a.images_dir}/ - view them before writing the note]")
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
-            f.write(header + "\n" + "\n".join(render(x, tz, "full", 0) for x in fulls))
+            f.write(header + "\n" + "\n".join(render(x, tz, "full", 0, photos[x["id"]]) for x in fulls))
         print(f"[full markdown written to {a.out}]")
 
 

@@ -48,6 +48,8 @@ li.task-list-item input{margin-right:.5em}
 details{margin-top:1.5rem;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.6rem 1rem}
 summary{cursor:pointer;font-weight:600}
 .meta{color:var(--muted)}
+main img{display:block;max-width:100%;max-height:520px;height:auto;margin:1rem 0 .3rem;border-radius:8px;border:1px solid var(--line)}
+main img+em,p>img+em{display:block;color:var(--muted);font-size:.92em}
 </style>
 </head>
 <body>
@@ -80,6 +82,36 @@ function load(urls){return new Promise(function(res,rej){var i=0;(function next(
 """
 
 
+IMG_MD = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+
+
+def inline_images(md, base_dir, max_edge=1000):
+    """Replace local image references with data URIs so the HTML is one standalone file."""
+    import base64, io
+
+    def repl(m):
+        alt, src = m.group(1), m.group(2)
+        if src.startswith(("http:", "https:", "data:")):
+            return m.group(0)
+        path = src if os.path.isabs(src) else os.path.join(base_dir, src)
+        if not os.path.isfile(path):
+            return f"*[{alt}: image file not found]*"
+        data, mime = open(path, "rb").read(), "image/jpeg"
+        try:
+            from PIL import Image
+            im = Image.open(io.BytesIO(data))
+            im.thumbnail((max_edge, max_edge))
+            buf = io.BytesIO()
+            im.convert("RGB").save(buf, "JPEG", quality=80)
+            data = buf.getvalue()
+        except Exception:
+            ext = os.path.splitext(path)[1].lower().lstrip(".")
+            mime = {"png": "image/png", "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
+        return f"![{alt}](data:{mime};base64,{base64.b64encode(data).decode()})"
+
+    return IMG_MD.sub(repl, md)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("src")
@@ -88,6 +120,8 @@ def main():
     a = p.parse_args()
     with open(a.src, encoding="utf-8") as f:
         md = f.read()
+    n_img = len(IMG_MD.findall(md))
+    md = inline_images(md, os.path.dirname(os.path.abspath(a.src)))
     m = re.search(r"^#\s+(.+)$", md, re.M)
     title = a.title or (m.group(1).strip() if m else "Riffado notes")
     out = (TEMPLATE
@@ -99,7 +133,7 @@ def main():
     with open(a.dst, "w", encoding="utf-8") as f:
         f.write(out)
     n = len(re.findall(r"^```mermaid", md, re.M))
-    print(f"wrote {a.dst} ({n} diagram(s))")
+    print(f"wrote {a.dst} ({n} diagram(s), {n_img} photo(s) embedded)")
 
 
 if __name__ == "__main__":

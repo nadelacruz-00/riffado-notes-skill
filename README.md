@@ -6,6 +6,7 @@ Each note contains:
 
 - a short **summary** at the start
 - the transcript **translated to English** (Tagalog/Taglish is supported), with speech-recognition errors cleaned up. Changes to doses, amounts, names and dates are logged and never made silently.
+- **photo-enriched context**: the recording's Plaud Highlight photos (participant lists, slides, whiteboards, prescriptions) are downloaded, viewed by Claude, and used for real names, exact spellings, values and diagrams. Useful photos are embedded in the note.
 - **topic sections**, each with one or more accurate **Mermaid diagrams**
 - **action items for each speaker** (speakers are inferred from context, because the transcripts have no labels)
 - plain-English prose following [ASD-STE100](https://github.com/danyuchn/asd-ste100-skill), checked by the bundled linter
@@ -23,8 +24,9 @@ riffado-notes/
 │   ├── notes-system-prompt.md        # default note format: translation, sections, diagrams, action items
 │   └── ste100-rules.md               # plain-English rules (adapted from asd-ste100-skill, MIT)
 ├── scripts/
-│   ├── riffado_notes.py              # fetches recordings and transcripts
-│   ├── render_notes_html.py          # converts notes.md to notes.html with rendered Mermaid diagrams
+│   ├── riffado_notes.py              # fetches recordings, transcripts and photos
+│   ├── render_notes_html.py          # converts notes.md to notes.html: renders diagrams, embeds photos
+│   ├── photo_tool.py                 # rotates or zooms into a photo to read small or sideways text
 │   └── ste-lint.py                   # STE100 linter (from asd-ste100-skill, MIT)
 └── THIRD_PARTY_NOTICES.md
 ```
@@ -60,4 +62,17 @@ Environment variables `RIFFADO_HOST`, `RIFFADO_API_KEY` and `RIFFADO_TZ` overrid
 - **Cloudflare error 1010 (`browser_signature_banned`).** Cloudflare's Browser Integrity Check rejects Python's default `Python-urllib/3.x` User-Agent. The script sends an explicit `User-Agent` header.
 - **Sandbox egress blocks** show up as `NETWORK_BLOCKED` with the hostname to allow, instead of a raw traceback.
 - **`summary` is usually null** on recordings. The skill tells Claude to write the notes from the transcript.
+- **Photos on S3 storage** come back as a 302 redirect to a pre-signed URL. The script fetches that URL without the `Authorization` header, because S3 rejects a request that uses two auth mechanisms.
 - **Mermaid `timeline` breaks when a time contains a colon** (`10:15 : event`). The note format tells Claude to write `10.15 AM : event` instead.
+
+## Photos
+
+Photos sync only for Plaud 4.0 accounts that have "Import Plaud transcripts, summaries and photos" turned on, and only Highlight photos sync. `GET /api/v1/recordings/{id}` returns them in an `images` array, sorted by `offset_ms`. The script:
+
+1. saves each photo to `images/<recording-id>/NN-MMmSSs.jpg`. If Pillow is installed, it fixes the rotation and downscales the photo to a 1568 px long edge. HEIC photos also need `pillow-heif`.
+2. lists the photos in a `### Photos` table in its output.
+3. inserts `[[PHOTO n · ~mm:ss]]` markers into the transcript. Transcripts have no timestamps, so each position is an estimate: the photo time divided by the recording length.
+
+Full-resolution originals are kept in `images/<recording-id>/orig/`. `scripts/photo_tool.py` uses them to rotate a photo (`--rotate 90`), zoom in (`--crop l,t,r,b`, as fractions) or split it into tiles (`--grid 2x2`).
+
+Pass `--no-images` to skip photos.
